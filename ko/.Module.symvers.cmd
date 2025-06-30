@@ -1,0 +1,1 @@
+cmd_/home/stufox/workspace/ko/Module.symvers := sed 's/\.ko$$/\.o/' /home/stufox/workspace/ko/modules.order | scripts/mod/modpost     -o /home/stufox/workspace/ko/Module.symvers -e -i Module.symvers   -T -

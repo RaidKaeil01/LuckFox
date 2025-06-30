@@ -1,0 +1,1 @@
+cmd_/home/stufox/workspace/ko/helloworld.ko := /home/stufox/workspace/luckfox-pico/tools/linux/toolchain/arm-rockchip830-linux-uclibcgnueabihf/bin/arm-rockchip830-linux-uclibcgnueabihf-ld -r -EL -z noexecstack --build-id=sha1  -T scripts/module.lds -o /home/stufox/workspace/ko/helloworld.ko /home/stufox/workspace/ko/helloworld.o /home/stufox/workspace/ko/helloworld.mod.o;  true
