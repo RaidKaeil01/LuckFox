@@ -27,6 +27,9 @@
 
 #include <video/mipi_display.h>
 
+#include <linux/gpio.h> //add
+#include <linux/of_gpio.h> //add
+
 #include "fbtft.h"
 #include "internal.h"
 
@@ -70,21 +73,44 @@ void fbtft_dbg_hex(const struct device *dev, int groupsize,
 }
 EXPORT_SYMBOL(fbtft_dbg_hex);
 
+
 static int fbtft_request_one_gpio(struct fbtft_par *par,
-				  const char *name, int index,
-				  struct gpio_desc **gpiop)
+                  const char *name, int index,
+                  struct gpio_desc **gpiop)
 {
-	struct device *dev = par->info->device;
-
-	*gpiop = devm_gpiod_get_index_optional(dev, name, index,
-					       GPIOD_OUT_LOW);
-	if (IS_ERR(*gpiop))
-		return dev_err_probe(dev, PTR_ERR(*gpiop), "Failed to request %s GPIO\n", name);
-
-	fbtft_par_dbg(DEBUG_REQUEST_GPIOS, par, "%s: '%s' GPIO\n",
-		      __func__, name);
-
-	return 0;
+    struct device *dev = par->info->device;
+    struct device_node *node = dev->of_node;
+    int gpio, flags, ret = 0;
+    enum of_gpio_flags of_flags;
+    if (of_find_property(node, name, NULL)) {
+        gpio = of_get_named_gpio_flags(node, name, index, &of_flags);
+        if (gpio == -ENOENT)
+            return 0;
+        if (gpio == -EPROBE_DEFER)
+            return gpio;
+        if (gpio < 0) {
+            dev_err(dev,
+                "failed to get '%s' from DT\n", name);
+            return gpio;
+        }
+         //active low translates to initially low
+        flags = (of_flags & OF_GPIO_ACTIVE_LOW) ? GPIOF_OUT_INIT_LOW :
+                            GPIOF_OUT_INIT_HIGH;
+        ret = devm_gpio_request_one(dev, gpio, flags,
+                        dev->driver->name);
+        if (ret) {
+            dev_err(dev,
+                "gpio_request_one('%s'=%d) failed with %d\n",
+                name, gpio, ret);
+            return ret;
+        }
+ 
+        *gpiop = gpio_to_desc(gpio);
+        fbtft_par_dbg(DEBUG_REQUEST_GPIOS, par, "%s: '%s' = GPIO%d\n",
+                            __func__, name, gpio);
+    }
+ 
+    return ret;
 }
 
 static int fbtft_request_gpios(struct fbtft_par *par)
@@ -212,19 +238,23 @@ static void fbtft_set_addr_win(struct fbtft_par *par, int xs, int ys, int xe,
 	write_reg(par, MIPI_DCS_WRITE_MEMORY_START);
 }
 
+
 static void fbtft_reset(struct fbtft_par *par)
 {
 	if (!par->gpio.reset)
 		return;
-
+ 
 	fbtft_par_dbg(DEBUG_RESET, par, "%s()\n", __func__);
-
+ 
 	gpiod_set_value_cansleep(par->gpio.reset, 1);
 	usleep_range(20, 40);
 	gpiod_set_value_cansleep(par->gpio.reset, 0);
 	msleep(120);
-
-	gpiod_set_value_cansleep(par->gpio.cs, 1);  /* Activate chip */
+	gpiod_set_value_cansleep(par->gpio.reset, 1);
+	msleep(120);
+ 
+	gpiod_set_value_cansleep(par->gpio.cs, 0);  /* Activate chip */
+	msleep(120);
 }
 
 static void fbtft_update_display(struct fbtft_par *par, unsigned int start_line,
@@ -1144,19 +1174,21 @@ static u32 fbtft_property_value(struct device *dev, const char *propname)
 	return val;
 }
 
+
+// 这里也可以设置led-gpios，但是你fbtft_request_gpios中也要相应改变。
 static struct fbtft_platform_data *fbtft_properties_read(struct device *dev)
 {
 	struct fbtft_platform_data *pdata;
-
+ 
 	if (!dev_fwnode(dev)) {
 		dev_err(dev, "Missing platform data or properties\n");
 		return ERR_PTR(-EINVAL);
 	}
-
+ 
 	pdata = devm_kzalloc(dev, sizeof(*pdata), GFP_KERNEL);
 	if (!pdata)
 		return ERR_PTR(-ENOMEM);
-
+ 
 	pdata->display.width = fbtft_property_value(dev, "width");
 	pdata->display.height = fbtft_property_value(dev, "height");
 	pdata->display.regwidth = fbtft_property_value(dev, "regwidth");
@@ -1170,15 +1202,15 @@ static struct fbtft_platform_data *fbtft_properties_read(struct device *dev)
 	pdata->txbuflen = fbtft_property_value(dev, "txbuflen");
 	pdata->startbyte = fbtft_property_value(dev, "startbyte");
 	device_property_read_string(dev, "gamma", (const char **)&pdata->gamma);
-
-	if (device_property_present(dev, "led-gpios"))
+ 
+	if (device_property_present(dev, "led"))
 		pdata->display.backlight = 1;
 	if (device_property_present(dev, "init"))
 		pdata->display.fbtftops.init_display =
 			fbtft_init_display_from_property;
-
+ 
 	pdata->display.fbtftops.request_gpios = fbtft_request_gpios;
-
+ 
 	return pdata;
 }
 
